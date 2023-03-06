@@ -1,0 +1,7 @@
+rows = 3349
+columns = 3396
+bits per sample = 16
+samples per pixel = 3
+photometric = 2
+line size = 6792
+planar config = 2
