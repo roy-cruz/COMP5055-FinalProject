@@ -1,13 +1,8 @@
 #include <iostream>
 #include <fstream>
-// #include <stdio.h>
-// #include <stdlib.h>
 #include <tiffio.h>
 #include <vector>
-// #include <string>
-// #include <sstream>
 #include <array>
-// #include <stdbool.h>
 #include <cstdlib>
 #include <cmath>
 
