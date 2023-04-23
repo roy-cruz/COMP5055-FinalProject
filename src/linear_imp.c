@@ -2,39 +2,61 @@
 #include <fstream>
 #include <tiffio.h>
 #include <vector>
-#include <array>
-#include <cstdlib>
 #include <cmath>
+#include <string>
+#include <cstring>
 
 void err_check(bool is_err, char* err_msg);
-void start_process(std::vector<std::string> fnames);
-void conv_tiff(TIFF* img, const float (&kernel)[9]);
-float sigmoid(float x) {
-    return (255.0/(1.0 + exp(-x)));
-}
+void conv_tiff(TIFF* tiff, const float (&edge_x)[9], const float (&edge_y)[9]);
+float sigmoid(float x);
 
+int numprocd;
 
 int main(int argc, char* argv[]) {
     bool is_err = false; 
 
     // Check that at least one argument is given.
-    if (argc < 2) {
-        is_err = true;
-    }
+    is_err = argc < 2;
     err_check(is_err, "ERROR: No imput files.");
 
-    // Initialize vector with filenames.
-    std::vector<std::string> fnames;
+    // Initialize vector TIFF pointers
+    std::vector<TIFF*> tiff_points;
     std::ifstream file_point;
     for (int i = 1; i < argc; i++) {
         file_point.open(argv[i]);
         if (file_point) {
-            fnames.push_back(std::string(argv[i]));
+            tiff_points.push_back(TIFFOpen((argv[i]), "r"));
+        } else {
+            std::cout << "WARNING: \'" << argv[i] << "\' could not be opened." << std::endl;
         }
         file_point.close();
-    }
+    };
 
-    start_process(fnames);
+    // Check that at least one tiff was opened.
+    is_err = (tiff_points.size() == 0);
+    err_check(is_err, "ERROR: No tiff file could be opened.");
+
+    // Prewitt operators (i.e. kernels) for edge detection (i.e. gradient magnitude calculation)
+    const float edge_x[9] = {
+        1.0, 0.0, -1.0,
+        1.0, 0.0, -1.0,
+        1.0, 0.0, -1.0
+    };
+
+    const float edge_y[9] = {
+        1.0, 1.0, 1.0,
+        0.0, 0.0, 0.0,
+        -1.0, -1.0, -1.0
+    };
+
+    numprocd = 0;
+
+    //Convolute all the tiffs! Also close each tiff after processing it.
+    for (int j = 0; j < tiff_points.size(); j++) {
+        conv_tiff(tiff_points[j], edge_x, edge_y);
+        TIFFClose(tiff_points[j]);
+        numprocd++;
+    };
     
     return 0;
 }
@@ -46,93 +68,89 @@ void err_check(bool is_err, char* err_msg){
     };    
 };
 
-void start_process(std::vector<std::string> fnames){
-    // Initialize kernel
-    const float kernel[9] = {
-        -1.0, -1.0, -1.0,
-        -1.0, 8.0, -1.0,
-        -1.0, -1.0, -1.0
-    };
+void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9]) {
+    // Get number of rows and number of columns
+    uint32_t width, height; 
+    TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
+    TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
 
-    // uint32_t columns, rows, npixels;
+    // Make space in memory for input buffer and output buffer.
+    uint32_t* inbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
+    uint32_t* outbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
 
-    // Load each file and send them to be convoluted
-    for (int j = 0; j < fnames.size(); j++) {
-        TIFF* img = TIFFOpen(fnames[j].c_str(), "r");
-        conv_tiff(img, kernel);
-        TIFFClose(img);
-    }
-};
+    // Read the image data from tiff and store it in inbuff
+    TIFFReadRGBAImage(tiff, width, height, inbuff, 0);
 
-void conv_tiff(TIFF* tiff, const float (&kernel)[9]) {
-    uint32_t columns, rows; // columns -> number of columns, rows -> number of rows
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            // Gradient value initialization.
+            float grad_x = 0.0f;
+            float grad_y = 0.0f;
 
-    TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &rows);
-    TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &columns);
+            // Loop over kernel elements
+            for (int k = -1; k <= 1; k++) {
+                for (int l = -1; l <= 1; l++){
+                    // Get pixel coodinates in the input image
+                    int x = j + l;
+                    int y = i + k;
 
-    uint32_t* inbuff = (uint32_t*) _TIFFmalloc(rows * columns * sizeof(uint32_t));
-    uint32_t* outbuff = (uint32_t*) _TIFFmalloc(rows * columns * sizeof(uint32_t));
+                    // Clamp the coordinates to the image boundaries
+                    x = std::max(0, std::min(x, (int)width - 1));
+                    y = std::max(0, std::min(y, (int)height - 1));
 
-    TIFFReadRGBAImage(tiff, columns, rows, inbuff);
+                    // Get pixel value in the input image
+                    uint32_t pixel = inbuff[y * width + x];
 
-    // Arrays for components
-    std::vector<uint8_t> r(rows * columns);
-    std::vector<uint8_t> g(rows * columns);
-    std::vector<uint8_t> b(rows * columns);
+                    uint8_t r = TIFFGetR(pixel);
+                    uint8_t g = TIFFGetG(pixel);
+                    uint8_t b = TIFFGetB(pixel);
 
-    for (int i = 0; i < rows * columns; i++) {
-        r[i] = TIFFGetR(inbuff[i]);
-        g[i] = TIFFGetG(inbuff[i]);
-        b[i] = TIFFGetB(inbuff[i]);
-    }
+                    // Convert pixel value to grayscale
+                    float gray = 0.2126f * r + 0.7152f * g + 0.0722f * b;
 
-    float sum_r, sum_g, sum_b, sum_a;
-    int radius = 1, kernel_size = 3; // Radius of convolution kernel and size of kernel
-    int pixel_x, pixel_y, pixel_index;
-    float weight;
-    uint32_t conv_pixel;
-
-    // Convolution
-    for (int j = 0; j < rows; j++) {
-        for (int i = 0; i < columns; i++) {
-            sum_r = 0; sum_g = 0.0; sum_b = 0.0;
-            for (int y = -radius; y <= radius; y++) {
-                for (int x = -radius; x <= radius; x++) {
-                    pixel_y = j + y;
-                    pixel_x = i + x;
-                    if (pixel_x >= 0 && pixel_x < columns && pixel_y >= 0 && pixel_y < rows) { // Check that its not over the edge
-                        pixel_index = pixel_y * columns + pixel_x;
-                        weight = kernel[(y + radius) * kernel_size + (x + radius)];
-                        sum_r += r[pixel_index] * weight;
-                        sum_g += g[pixel_index] * weight;
-                        sum_b += b[pixel_index] * weight;
-                    }
+                    // Multiply pixel value with corresponding kernel element and add to the gradient values
+                    grad_x += gray * kernel_x[(k + 1) * 3 + (l + 1)];
+                    grad_y += gray * kernel_y[(k + 1) * 3 + (l + 1)];
                 }
             }
 
-            int sum_rc = uint32_t(sigmoid(sum_r));
-            int sum_gc = uint32_t(sigmoid(sum_g));
-            int sum_bc = uint32_t(sigmoid(sum_b));
+            // Compute magnitude of gradient
+            float grad = sqrt(grad_x * grad_x + grad_y * grad_y);
 
-            // At this point, we have calculated one of the convoluted picture's pixel. We can proceed to store the calculated values.
-            conv_pixel = (sum_rc << 16) | (sum_gc << 8) | sum_bc;
+            //Restrict value to [0, 255] using sigmoid
+            grad = 255 * sigmoid(grad);
 
-            // Store result in outbuff
-            outbuff[j * columns + i] = conv_pixel;
+            //Convert magnitud to integer value
+            uint8_t edge = (uint8_t)grad;
 
+            // Set output pixel value to the edge value in all channels;
+            // outbuff[i * width + j] = TIFFRGBAImagePackRGBA(edge, edge, edge, 255); // Likely source of error
+            outbuff[i * width + j] = (edge << 24) | (edge << 16) | (edge << 8) | (255); 
         }
     }
 
-    TIFF* outimg = TIFFOpen("conv_img.tif", "w");
+    std::string fname_str = "./conv_img_";
+    fname_str += std::to_string(numprocd);
+    fname_str += ".tiff";
+
+    char fname[100];
+    std::strcpy(fname, fname_str.c_str());
+
+    // Construct tiff from outbuff.
+    TIFF* outimg = TIFFOpen(fname, "w");
     if (outimg) {
-        TIFFSetField(outimg, TIFFTAG_IMAGEWIDTH, columns);
-        TIFFSetField(outimg, TIFFTAG_IMAGELENGTH, rows);
-        TIFFSetField(outimg, TIFFTAG_SAMPLESPERPIXEL, 3);
-        TIFFSetField(outimg, TIFFTAG_BITSPERSAMPLE, 16);
-        // TIFFSetField(outimg, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
-        TIFFSetField(outimg, TIFFTAG_PLANARCONFIG, 2);
-        TIFFSetField(outimg, TIFFTAG_PHOTOMETRIC, 2);
-        TIFFWriteEncodedStrip(outimg, 0, outbuff, columns * rows * sizeof(uint32_t));
+        TIFFSetField(outimg, TIFFTAG_IMAGEWIDTH, width);
+        TIFFSetField(outimg, TIFFTAG_IMAGELENGTH, height);
+        TIFFSetField(outimg, TIFFTAG_BITSPERSAMPLE, 8);
+        TIFFSetField(outimg, TIFFTAG_SAMPLESPERPIXEL, 4);
+        TIFFSetField(outimg, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+        TIFFSetField(outimg, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+
+        for (int i = 0; i < height; i ++) {
+            // Write one scanline at a time
+            TIFFWriteScanline(outimg, &outbuff[(height - i - 1) * width], i);
+        }
+
         TIFFClose(outimg);
     }
 
@@ -140,6 +158,8 @@ void conv_tiff(TIFF* tiff, const float (&kernel)[9]) {
     delete[] outbuff;
 
     std::cout << "Yay!" << std::endl;
+}
 
-
+float sigmoid(float x) {
+    return (1/(1.0 + exp(-x)));
 }
