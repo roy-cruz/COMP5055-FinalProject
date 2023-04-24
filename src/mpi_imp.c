@@ -128,7 +128,7 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
     if ((my_rank == (comm_sz - 1)) & (rowsleft != 0)) {
         my_numrows += rowsleft;
     }
-    int my_endrow = my_startrow + my_numrows - 1;
+    int my_endrow = my_startrow + my_numrows;
 
     for (int i = my_startrow; i < my_endrow; i++) {
         for (int j = 0; j < width; j++) {
@@ -145,9 +145,7 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
 
                     // Clamp the coordinates to the image boundaries
                     x = std::max(0, std::min(x, (int)width - 1));
-                    if ((my_rank == 0) || (my_rank == comm_sz - 1)) {
-                        y = std::max(0, std::min(y, (int)height - 1));
-                    }
+                    y = std::max(0, std::min(y, (int)height - 1));
 
                     // Get pixel value in the input image
                     uint32_t pixel = shmptr_in[y * width + x];
