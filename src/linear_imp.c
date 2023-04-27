@@ -3,10 +3,11 @@
  * Purpose:  Perform an edge detection convolution of a series of .tif/.tiff images.
  *
  * Compile:  g++ linear_imp.c -o linear_imp
- * Run:      ./linear_imp <path to TIFF 1> <path to TIFF 2> ...
+ * Run:      ./linear_imp ./data/<TIFF image(s)>
  *
- * Input:    Path to TIFF images to be covoluted
- * Output:   TIFF images which highlight the edges detected on the input TIFF images.
+ * Input:    TIFF image(s) stored in subdirectory ./data.
+ * Output:   TIFF image(s) with edge detection convolution applied stored in 
+ *           subdirectory ./convoluted
  *
  * Errors:   If an error is detected (no images provided or no images can be opened), the
  *           program prints a message and all processes quit.
@@ -24,8 +25,8 @@ void err_check(bool ok, char* err_msg);
 void conv_tiff(uint32_t *inbuff, uint32_t *outbuff, int width, int height, const float (&kernel_x)[9], const float (&kernel_y)[9]);
 float sigmoid(float x);
 
+/*-------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
-
     err_check(argc >= 2, "ERROR: No imput files.");
 
     // Initialize vector TIFF pointers
@@ -77,10 +78,9 @@ int main(int argc, char* argv[]) {
 
         std::string fname_str = "_conv.tiff";
         std::string fnameorig (argv[j+1]);
-        fnameorig = fnameorig.substr(-13, 8);
+        fnameorig = (fnameorig.substr(fnameorig.size() - 13, 13)).substr(0, 9);
         fname_str = "./convoluted/" + fnameorig + fname_str;
-
-        char fname[15];
+        char fname[100];
         std::strcpy(fname, fname_str.c_str());
 
         // Construct tiff from outbuff.
@@ -107,16 +107,42 @@ int main(int argc, char* argv[]) {
     };
     
     return 0;
-}
+} /* main */
 
-void err_check(bool ok, char* err_msg){
+/*-------------------------------------------------------------------
+ * Function:  err_check
+ * Purpose:   Check whether there is an error. Terminate program if so.
+ * In args:   ok:      false if calling process has found an error, true
+ *                     otherwise
+ *            err_msg: error message to be printed
+ */
+void err_check(
+        bool ok       /* in  */, 
+        char* err_msg /* in  */){
     if (ok == false) {
         std::cerr << err_msg << std::endl;
         exit(1);
     }
-}
+} /* erra_check */
 
-void conv_tiff(uint32_t *inbuff, uint32_t *outbuff, int width, int height, const float (&kernel_x)[9], const float (&kernel_y)[9]) {
+/*-------------------------------------------------------------------
+ * Function:  conv_tiff
+ * Purpose:   Perform convolution of image using two edge detection 
+ *            in x and y directions.
+ * In args:   inbuff:   input buffer
+ *            width:    number of columns in tiff image
+ *            height:   number of rows in tiff image
+ *            kernel_x: used to find gradient along x axis.
+ *            kernel_y: used to find gradient along y axis.
+ * Out args:  outbuff:  outbut buffer
+ */
+void conv_tiff(
+        uint32_t *inbuff            /* in  */, 
+        uint32_t *outbuff           /* out */, 
+        int width                   /* in  */, 
+        int height                  /* in  */, 
+        const float (&kernel_x)[9]  /* in  */, 
+        const float (&kernel_y)[9]  /* in  */) {
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             // Gradient value initialization.
@@ -164,8 +190,13 @@ void conv_tiff(uint32_t *inbuff, uint32_t *outbuff, int width, int height, const
             outbuff[i * width + j] = (edge << 24) | (edge << 16) | (edge << 8) | (255); 
         }
     }
-}
+} /* conv_tiff */
 
-float sigmoid(float x) {
+/*-------------------------------------------------------------------
+ * Function:  sigmoid
+ * Purpose:   Given an input x, evaluates the sigmoid function
+ * In args:   x: value at which the sigmoid function is to be evaluated at
+ */
+float sigmoid(float x /* in */) {
     return (1/(1.0 + exp(-x)));
-}
+} /* sigmoid */
