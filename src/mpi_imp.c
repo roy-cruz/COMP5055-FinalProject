@@ -75,13 +75,6 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
     TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
     TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
 
-    // // Make space in memory for input buffer and output buffer.
-    // uint32_t* inbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
-    // uint32_t* outbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
-
-    // // Read the image data from tiff and store it in inbuff
-    // TIFFReadRGBAImage(tiff, width, height, inbuff, 0);
-
     int my_rank, comm_sz;
     MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -181,7 +174,7 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
     MPI_Barrier(nodecomm);
 
     if (my_rank == 0) {
-        std::string fname_str = "./conv_img_";
+        std::string fname_str = "./conv_";
         fname_str += std::to_string(numprocd);
         fname_str += "_mpi.tiff";
 
