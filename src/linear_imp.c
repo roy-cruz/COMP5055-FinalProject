@@ -10,7 +10,7 @@
  *           subdirectory ./convoluted
  *
  * Errors:   If an error is detected (no images provided or no images can be opened), the
- *           program prints a message and all processes quit.
+ *           program prints a message and quits.
  *
  */
 #include <iostream>
@@ -20,10 +20,13 @@
 #include <string>
 #include <cstring>
 #include <stdbool.h>
+#include <chrono>
 
 void err_check(bool ok, char* err_msg);
-void conv_tiff(uint32_t *inbuff, uint32_t *outbuff, int width, int height, const float (&kernel_x)[9], const float (&kernel_y)[9]);
+void conv_tiff(TIFF* tiff, char* path, const float (&kernel_x)[9], const float (&kernel_y)[9]);
 float sigmoid(float x);
+
+float avg_time = 0;
 
 /*-------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
@@ -39,7 +42,6 @@ int main(int argc, char* argv[]) {
         else
             std::cout << "WARNING: \'" << argv[i] << "\' could not be opened." << std::endl;
     }
-
 
     // Check that at least one tiff was opened.
     err_check(tiff_points.size() != 0, "ERROR: No tiff file could be opened.");
@@ -59,52 +61,11 @@ int main(int argc, char* argv[]) {
 
     // Convolute all the tiffs! Also close each tiff after processing it.
     for (int j = 0; j < tiff_points.size(); j++) {
-        // Get number of rows and number of columns
-        uint32_t width, height; 
-        TIFFGetField(tiff_points[j], TIFFTAG_IMAGELENGTH, &height);
-        TIFFGetField(tiff_points[j], TIFFTAG_IMAGEWIDTH, &width);
-
-        // Make space in memory for input buffer and output buffer.
-        uint32_t* inbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
-        uint32_t* outbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
-
-        // Read the image data from tiff and store it in inbuff
-        TIFFReadRGBAImage(tiff_points[j], width, height, inbuff, 0);
-
-        // Perform convolution
-        conv_tiff(inbuff, outbuff, width, height, edge_x, edge_y);
-
+        conv_tiff(tiff_points[j], argv[j + 1], edge_x, edge_y);
         TIFFClose(tiff_points[j]);
-
-        std::string fname_str = "_conv.tiff";
-        std::string fnameorig (argv[j+1]);
-        fnameorig = (fnameorig.substr(fnameorig.size() - 13, 13)).substr(0, 9);
-        fname_str = "./convoluted/" + fnameorig + fname_str;
-        char fname[100];
-        std::strcpy(fname, fname_str.c_str());
-
-        // Construct tiff from outbuff.
-        TIFF* outimg = TIFFOpen(fname, "w");
-        if (outimg) {
-            TIFFSetField(outimg, TIFFTAG_IMAGEWIDTH, width);
-            TIFFSetField(outimg, TIFFTAG_IMAGELENGTH, height);
-            TIFFSetField(outimg, TIFFTAG_BITSPERSAMPLE, 8);
-            TIFFSetField(outimg, TIFFTAG_SAMPLESPERPIXEL, 4);
-            TIFFSetField(outimg, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
-            TIFFSetField(outimg, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
-
-            // Write one scanline at a time
-            for (int i = 0; i < height; i ++)
-                TIFFWriteScanline(outimg, &outbuff[(height - i - 1) * width], i);
-
-            TIFFClose(outimg);
-        }
-
-        delete[] inbuff;
-        delete[] outbuff;
-
-        std::cout << "Convoluted file " << fnameorig << ".tiff" << std::endl;
     };
+    avg_time = (avg_time / tiff_points.size()) * 1e-09;
+    std::cout << "Average convolution time: " << avg_time << " seconds" << std::endl;
     
     return 0;
 } /* main */
@@ -123,7 +84,7 @@ void err_check(
         std::cerr << err_msg << std::endl;
         exit(1);
     }
-} /* erra_check */
+} /* err_check */
 
 /*-------------------------------------------------------------------
  * Function:  conv_tiff
@@ -137,12 +98,24 @@ void err_check(
  * Out args:  outbuff:  outbut buffer
  */
 void conv_tiff(
-        uint32_t *inbuff            /* in  */, 
-        uint32_t *outbuff           /* out */, 
-        int width                   /* in  */, 
-        int height                  /* in  */, 
+        TIFF* tiff,
+        char* path,
         const float (&kernel_x)[9]  /* in  */, 
         const float (&kernel_y)[9]  /* in  */) {
+
+    // Get number of rows and number of columns
+    uint32_t width, height; 
+    TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
+    TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
+
+    // Make space in memory for input buffer and output buffer.
+    uint32_t* inbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
+    uint32_t* outbuff = (uint32_t*) _TIFFmalloc(height * width * sizeof(uint32_t));
+
+    // Read the image data from tiff and store it in inbuff
+    TIFFReadRGBAImage(tiff, width, height, inbuff, 0);
+
+    auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             // Gradient value initialization.
@@ -190,6 +163,39 @@ void conv_tiff(
             outbuff[i * width + j] = (edge << 24) | (edge << 16) | (edge << 8) | (255); 
         }
     }
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = duration_cast<std::chrono::nanoseconds>(end - start);
+    avg_time += static_cast<float>(duration.count());
+
+    std::string fname_str = "_conv.tiff";
+    std::string fnameorig (path);
+    fnameorig = (fnameorig.substr(fnameorig.size() - 13, 13)).substr(0, 9);
+    fname_str = "./convoluted/" + fnameorig + fname_str;
+    char fname[100];
+    std::strcpy(fname, fname_str.c_str());
+
+    // Construct tiff from outbuff.
+    TIFF* outimg = TIFFOpen(fname, "w");
+    if (outimg) {
+        TIFFSetField(outimg, TIFFTAG_IMAGEWIDTH, width);
+        TIFFSetField(outimg, TIFFTAG_IMAGELENGTH, height);
+        TIFFSetField(outimg, TIFFTAG_BITSPERSAMPLE, 8);
+        TIFFSetField(outimg, TIFFTAG_SAMPLESPERPIXEL, 4);
+        TIFFSetField(outimg, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+        TIFFSetField(outimg, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+
+        // Write one scanline at a time
+        for (int i = 0; i < height; i ++)
+            TIFFWriteScanline(outimg, &outbuff[(height - i - 1) * width], i);
+
+        TIFFClose(outimg);
+    }
+    
+    std::cout << "Convoluted file " << fnameorig.substr(1) << ".tiff" << std::endl;
+
+    delete[] inbuff;
+    delete[] outbuff;
+
 } /* conv_tiff */
 
 /*-------------------------------------------------------------------
@@ -197,6 +203,7 @@ void conv_tiff(
  * Purpose:   Given an input x, evaluates the sigmoid function
  * In args:   x: value at which the sigmoid function is to be evaluated at
  */
-float sigmoid(float x /* in */) {
+float sigmoid(
+        float x /* in */) {
     return (1/(1.0 + exp(-x)));
 } /* sigmoid */

@@ -1,3 +1,17 @@
+/* File:     mpi_imp.c
+ *
+ * Purpose:  Perform an edge detection convolution of a series of .tif/.tiff images.
+ *
+ * Compile:  g++ mpi_imp.c -o mpi_imp
+ * Run:      ./mpi_imp ./data/<TIFF image(s)>
+ *
+ * Input:    TIFF image(s) stored in subdirectory ./data.
+ * Output:   TIFF image(s) with edge detection convolution applied stored in 
+ *           subdirectory ./convoluted
+ *
+ * Errors:   If an error is detected (no images provided or no images can be opened), the
+ *           program prints a message and all processes quit.
+ */
 #include <iostream>
 #include <fstream>
 #include <tiffio.h>
@@ -7,35 +21,29 @@
 #include <cstring>
 #include <mpi.h>
 
-void err_check(bool is_err, char* err_msg);
-void conv_tiff(TIFF* tiff, const float (&edge_x)[9], const float (&edge_y)[9]);
+void err_check(bool ok, char* err_msg);
+void conv_tiff(TIFF* tiff, char* path, const float (&edge_x)[9], const float (&edge_y)[9], int my_rank, int comm_sz);
 float sigmoid(float x);
 
-int numprocd;
+double avgtime = 0;
 
+/*-------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
-    bool is_err = false; 
-
-    // Check that at least one argument is given.
-    is_err = argc < 2;
-    err_check(is_err, "ERROR: No imput files.");
+    err_check(argc >= 2, "ERROR: No imput files.");
 
     // Initialize vector TIFF pointers
+    TIFF* tiff = NULL;
     std::vector<TIFF*> tiff_points;
-    std::ifstream file_point;
     for (int i = 1; i < argc; i++) {
-        file_point.open(argv[i]);
-        if (file_point) {
-            tiff_points.push_back(TIFFOpen((argv[i]), "r"));
-        } else {
+        tiff = TIFFOpen((argv[i]), "r");
+        if (tiff != NULL)
+            tiff_points.push_back(tiff);
+        else
             std::cout << "WARNING: \'" << argv[i] << "\' could not be opened." << std::endl;
-        }
-        file_point.close();
-    };
+    }
 
     // Check that at least one tiff was opened.
-    is_err = (tiff_points.size() == 0);
-    err_check(is_err, "ERROR: No tiff file could be opened.");
+    err_check(tiff_points.size() != 0, "ERROR: No tiff file could be opened.");
 
     // Prewitt operators (i.e. kernels) for edge detection (i.e. gradient magnitude calculation)
     const float edge_x[9] = {
@@ -50,35 +58,69 @@ int main(int argc, char* argv[]) {
         -1.0, -1.0, -1.0
     };
 
-    numprocd = 0;
-
-    //Convolute all the tiffs! Also close each tiff after processing it.
-    for (int j = 0; j < tiff_points.size(); j++) {
-        conv_tiff(tiff_points[j], edge_x, edge_y);
-        TIFFClose(tiff_points[j]);
-        numprocd++;
-    };
-    
-    return 0;
-}
-
-void err_check(bool is_err, char* err_msg){
-    if (is_err == true) {
-        std::cerr << err_msg << std::endl;
-        exit(1);
-    };    
-};
-
-void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9]) {
-    // Get number of rows and number of columns
-    uint32_t width, height; 
-    TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
-    TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
-
+    //Initalize MPI
     int my_rank, comm_sz;
     MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
+
+    //Convolute all the tiffs! Also close each tiff after processing it.
+    for (int j = 0; j < tiff_points.size(); j++) {
+        conv_tiff(tiff_points[j], argv[j + 1], edge_x, edge_y, my_rank, comm_sz);
+        TIFFClose(tiff_points[j]);
+    };
+    
+    avgtime = avgtime / tiff_points.size();
+    if (my_rank == 0)
+        std::cout << "Averge convolution time: " << avgtime << std::endl;
+
+    //Finalize MPI
+    MPI_Finalize();
+    
+    return 0;
+}
+
+/*-------------------------------------------------------------------
+ * Function:  err_check
+ * Purpose:   Check whether there is an error. Terminate program if so.
+ * In args:   ok:      false if calling process has found an error, true
+ *                     otherwise
+ *            err_msg: error message to be printed
+ */
+void err_check(
+        bool ok       /* in  */, 
+        char* err_msg /* in  */){
+    if (ok == false) {
+        std::cerr << err_msg << std::endl;
+        exit(1);
+    }
+} /* err_check */
+
+/*-------------------------------------------------------------------
+ * Function:  conv_tiff
+ * Purpose:   Perform convolution of image using two edge detection 
+ *            in x and y directions.
+ * In args:   tiff:     pointer to tiff image
+ *            kernel_x: used to find gradient along x axis.
+ *            kernel_y: used to find gradient along y axis.
+ * 
+ * Note:      This impementation employs MPI to parallelize the
+ *            convolution. It does this by sharing a memory window
+ *            among all the processes. Each process then convolutes
+ *            part of the image stored in this memory window.
+ */
+void conv_tiff(
+        TIFF* tiff                 /* in  */,
+        char* path                 /* in  */, 
+        const float (&kernel_x)[9] /* in  */, 
+        const float (&kernel_y)[9] /* in  */,
+        int my_rank                /* in  */,
+        int comm_sz                /* in  */) {
+
+    // Get number of rows and number of columns
+    uint32_t width, height; 
+    TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
+    TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
 
     // Create a node-local communicator
     MPI_Comm nodecomm; // Declare communicator object (group of processes)
@@ -109,18 +151,16 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
     uint32_t* shmptr_out;
     MPI_Win_shared_query(win_out, 0, &size_out, &disp_unit_out, &shmptr_out);
 
-    if (my_rank == 0) {
+    if (my_rank == 0)
         TIFFReadRGBAImage(tiff, width, height, shmptr_in, 0);
-    }
-
+    avgtime -= MPI_Wtime();
     MPI_Barrier(nodecomm);
 
     int my_numrows = height/comm_sz; // Number of rows assigned to this process
     int my_startrow = my_numrows * my_rank;
     int rowsleft = height % comm_sz;
-    if ((my_rank == (comm_sz - 1)) & (rowsleft != 0)) {
+    if ((my_rank == (comm_sz - 1)) & (rowsleft != 0))
         my_numrows += rowsleft;
-    }
     int my_endrow = my_startrow + my_numrows;
 
     for (int i = my_startrow; i < my_endrow; i++) {
@@ -166,18 +206,18 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
             uint8_t edge = (uint8_t)grad;
 
             // Set output pixel value to the edge value in all channels;
-            // outbuff[i * width + j] = TIFFRGBAImagePackRGBA(edge, edge, edge, 255); // Likely source of error
             shmptr_out[i * width + j] = (edge << 24) | (edge << 16) | (edge << 8) | (255); 
         }
     }
 
     MPI_Barrier(nodecomm);
+    avgtime += MPI_Wtime();
 
     if (my_rank == 0) {
-        std::string fname_str = "./conv_";
-        fname_str += std::to_string(numprocd);
-        fname_str += "_mpi.tiff";
-
+        std::string fname_str = "_conv.tiff";
+        std::string fnameorig (path);
+        fnameorig = (fnameorig.substr(fnameorig.size() - 13, 13)).substr(0, 9);
+        fname_str = "./convoluted/" + fnameorig + fname_str;
         char fname[100];
         std::strcpy(fname, fname_str.c_str());
 
@@ -197,16 +237,21 @@ void conv_tiff(TIFF* tiff, const float (&kernel_x)[9], const float (&kernel_y)[9
             }
             TIFFClose(outimg);
         }
+        std::cout << "Convoluted file " << fnameorig.substr(1) << ".tiff" << std::endl;
     }
 
     MPI_Barrier(nodecomm);
     MPI_Win_free(&win_in);
     MPI_Win_free(&win_out);
-    MPI_Finalize();
     
-    std::cout << "Yay!" << std::endl;
-}
+} /* conv_tiff */
 
-float sigmoid(float x) {
+/*-------------------------------------------------------------------
+ * Function:  sigmoid
+ * Purpose:   Given an input x, evaluates the sigmoid function
+ * In args:   x: value at which the sigmoid function is to be evaluated at
+ */
+float sigmoid(
+        float x /* in */) {
     return (1/(1.0 + exp(-x)));
-}
+} /* sigmoid */
