@@ -164,7 +164,7 @@ void conv_tiff(
         }
     }
     auto end = std::chrono::high_resolution_clock::now();
-    auto duration = duration_cast<std::chrono::nanoseconds>(end - start);
+    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     avg_time += static_cast<float>(duration.count());
 
     std::string fname_str = "_conv.tiff";
