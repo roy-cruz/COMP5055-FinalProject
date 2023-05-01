@@ -207,7 +207,7 @@ void *thread_proc(
 
     if(ta->done_conv_num + 1 == ta->thread_count) {
         ta->end = std::chrono::high_resolution_clock::now();
-        ta->duration = duration_cast<std::chrono::nanoseconds>(ta->end - ta->start);
+        ta->duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ta->end - ta->start);
         ta->time_avg += static_cast<float>(ta->duration.count());
     }
     ta->done_conv_num += 1;
