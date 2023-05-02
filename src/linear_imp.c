@@ -135,7 +135,6 @@ void conv_tiff(
 
                     // Get pixel value in the input image
                     uint32_t pixel = inbuff[y * width + x];
-
                     uint8_t r = TIFFGetR(pixel);
                     uint8_t g = TIFFGetG(pixel);
                     uint8_t b = TIFFGetB(pixel);
