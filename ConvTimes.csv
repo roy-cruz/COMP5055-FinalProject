@@ -1,4 +1,4 @@
-Thread Num,Linear Implementation,MPI,Pthreads,Cuda (1 block),CUDA (2 blocks),CUDA (4 blocks),CUDA (8 blocks)
+# Threads,Serial,MPI,Pthreads,CUDA (1 blk),CUDA (2 blk),CUDA (4 blk),CUDA (8 blk)
 1,2.48829,2.48058,2.56887,6.97722,,,
 2,,1.2866,1.32765,3.61733,3.48965,,
 3,,0.887549,0.886716,1.90885,,,

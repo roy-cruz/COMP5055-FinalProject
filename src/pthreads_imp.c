@@ -2,8 +2,8 @@
  *
  * Purpose:  Perform an edge detection convolution of a series of .tif/.tiff images.
  *
- * Compile:  g++ pthreads_imp.c -o pthreads_imp
- * Run:      ./pthreads_imp ./data/<TIFF image(s)>
+ * Compile:  g++ pthreads_imp.c -o pthreads_imp -ltiff -pthreads
+ * Run:      ./pthreads_imp <Number of threads> ./data/<TIFF image(s)>
  *
  * Input:    TIFF image(s) stored in subdirectory ./data.
  * Output:   TIFF image(s) with edge detection convolution applied stored in 
@@ -253,7 +253,7 @@ void conv_tiff(
                     uint8_t g = TIFFGetG(pixel);
                     uint8_t b = TIFFGetB(pixel);
 
-                    // Convert pixel value to grayscale
+                    // Compute luminance
                     float gray = 0.2126f * r + 0.7152f * g + 0.0722f * b;
 
                     // Multiply pixel value with corresponding kernel element and add to the gradient values

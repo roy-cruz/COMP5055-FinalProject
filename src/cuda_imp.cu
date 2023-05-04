@@ -1,9 +1,9 @@
-/* File:     pthreads_imp.c
+/* File:     cuda_imp.c
  *
  * Purpose:  Perform an edge detection convolution of a series of .tif/.tiff images.
  *
- * Compile:  g++ pthreads_imp.c -o pthreads_imp
- * Run:      ./pthreads_imp ./data/<TIFF image(s)>
+ * Compile:  nvcc cuda_imp.cu -o cuda_imp -ltiff
+ * Run:      ./cuda_imp <Number of threads> <Number of blocks> ./data/<TIFF image(s)>
  *
  * Input:    TIFF image(s) stored in subdirectory ./data.
  * Output:   TIFF image(s) with edge detection convolution applied stored in 
@@ -22,11 +22,6 @@
 #include <cstring>
 #include <cuda.h>
 #include <chrono>
-
-// void err_check(bool ok, char* err_msg);
-void err_check(bool ok, char* err_msg);
-float sigmoid(float x);
-void *thread_proc(void *args);
 
 __global__ void conv_tiff(uint32_t* inbuff, uint32_t* outbuff, int width, int height);
 
@@ -50,9 +45,6 @@ int main(int argc, char* argv[]) {
             std::cout << "WARNING: \'" << argv[i] << "\' could not be opened." << std::endl;
         file_point.close();
     };
-
-    // Check that at least one tiff was opened.
-    // err_check(tiff_points.size() != 0, "ERROR: No tiff file could be opened.");
     
     // Convolute all the tiffs! Also close each tiff after processing it.
     for (int j = 0; j < tiff_points.size(); j++) {
@@ -116,23 +108,6 @@ int main(int argc, char* argv[]) {
 
     return 0;
 } /* main */
-
-/*-------------------------------------------------------------------
- * Function:  err_check
- * Purpose:   Check whether there is an error. Terminate program if so.
- * In args:   ok:      false if calling process has found an error, true
- *                     otherwise
- *            err_msg: error message to be printed
- */
-
-// void err_check(
-//         bool ok       /* in  */, 
-//         char* err_msg /* in  */){
-//     if (ok == false) {
-//         std::cerr << err_msg << std::endl;
-//         exit(-1);
-//     }
-// } /* err_check */
 
 /*-------------------------------------------------------------------
  * Function:  conv_tiff

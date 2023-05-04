@@ -3,7 +3,7 @@
  * Purpose:  Perform an edge detection convolution of a series of .tif/.tiff images.
  *
  * Compile:  g++ mpi_imp.c -o mpi_imp
- * Run:      ./mpi_imp ./data/<TIFF image(s)>
+ * Run:      mpiexec -n <number of cores> ./mpi_imp ./data/<TIFF image(s)>
  *
  * Input:    TIFF image(s) stored in subdirectory ./data.
  * Output:   TIFF image(s) with edge detection convolution applied stored in 
@@ -123,15 +123,13 @@ void conv_tiff(
     TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
 
     // Create a node-local communicator
-    MPI_Comm nodecomm; // Declare communicator object (group of processes)
+    MPI_Comm nodecomm;
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &nodecomm); 
-    // ^ Create communicator from MPI_COMM_WORLD
 
     // Create a share memory window for inbuff
-    MPI_Win win_in; // Declare window object
+    MPI_Win win_in; 
     uint32_t* baseptr_in;
     MPI_Win_allocate_shared(height * width * sizeof(uint32_t), sizeof(uint32_t), MPI_INFO_NULL, nodecomm, &baseptr_in, &win_in);
-    // ^ Create shared memory window by allocating memory for each process on the same node
 
     // Create a shared memory window for outbuff
     MPI_Win win_out;
@@ -140,10 +138,9 @@ void conv_tiff(
 
     // Get a pointer to the shared memory window for inbuff
     int disp_unit_in;
-    MPI_Aint size_in; // MPI_Aint -> represetns address integer in MPI
+    MPI_Aint size_in;
     uint32_t* shmptr_in;
     MPI_Win_shared_query(win_in, 0, &size_in, &disp_unit_in, &shmptr_in);
-    // ^ Queries process-local address for remote memory segment created with MPI_Win_allocate_shared
 
     // Get a pointer to the shared memory window for outbuff
     int disp_unit_out;
@@ -151,18 +148,21 @@ void conv_tiff(
     uint32_t* shmptr_out;
     MPI_Win_shared_query(win_out, 0, &size_out, &disp_unit_out, &shmptr_out);
 
+    // Process one reads reads the TIFF image data and stores it in shared memory window 
     if (my_rank == 0)
         TIFFReadRGBAImage(tiff, width, height, shmptr_in, 0);
     avgtime -= MPI_Wtime();
     MPI_Barrier(nodecomm);
 
-    int my_numrows = height/comm_sz; // Number of rows assigned to this process
+    // Process computes the rows its will apply convolution to.
+    int my_numrows = height/comm_sz;
     int my_startrow = my_numrows * my_rank;
     int rowsleft = height % comm_sz;
     if ((my_rank == (comm_sz - 1)) & (rowsleft != 0))
         my_numrows += rowsleft;
     int my_endrow = my_startrow + my_numrows;
 
+    // Process applies convolution to its assigned domain of the image
     for (int i = my_startrow; i < my_endrow; i++) {
         for (int j = 0; j < width; j++) {
             // Gradient value initialization.
@@ -187,7 +187,7 @@ void conv_tiff(
                     uint8_t g = TIFFGetG(pixel);
                     uint8_t b = TIFFGetB(pixel);
 
-                    // Convert pixel value to grayscale
+                    // Compute luminance
                     float gray = 0.2126f * r + 0.7152f * g + 0.0722f * b;
 
                     // Multiply pixel value with corresponding kernel element and add to the gradient values
@@ -243,7 +243,6 @@ void conv_tiff(
     MPI_Barrier(nodecomm);
     MPI_Win_free(&win_in);
     MPI_Win_free(&win_out);
-    
 } /* conv_tiff */
 
 /*-------------------------------------------------------------------
